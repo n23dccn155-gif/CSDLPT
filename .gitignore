@@ -1,0 +1,14 @@
+data/*.json
+data/*.csv
+data/*.log
+__pycache__/
+*.pyc
+.env
+venv/
+.venv/
+node_modules/
+data/raw/
+data/benchmark_history.json
+data/node_*.log
+*.log
+*.zip

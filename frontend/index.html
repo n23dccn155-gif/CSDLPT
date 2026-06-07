@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Distributed Graph Pattern Matching for Fraud Ring Detection - INT1414 Distributed Database Systems Project #136">
+    <title>Fraud Ring Detection | Distributed Database Dashboard</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner-lg"></div>
+        <div class="loading-text" id="loadingText">Processing...</div>
+    </div>
+
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-brand">
+                <div class="header-icon"></div>
+                <div>
+                    <div class="header-title">Distributed Fraud Ring Detection (Phát hiện đường dây gian lận phân tán)</div>
+                    <div class="header-subtitle">INT1414 — Project #136 | Category 14: Graph & Multi-Model Distributed DBs</div>
+                </div>
+            </div>
+            <div class="header-actions">
+                <div class="status-badge offline" id="systemStatus">
+                    <div class="status-dot"></div>
+                    <span>System Offline (Hệ thống ngoại tuyến)</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Tab Navigation -->
+        <nav class="tab-nav">
+            <button class="tab-btn active" data-tab="pipeline" id="tab-pipeline">
+                <span class="tab-icon"></span> Pipeline (Đường ống)
+            </button>
+            <button class="tab-btn" data-tab="nodes" id="tab-nodes">
+                <span class="tab-icon"></span> Nodes (Các nút mạng)
+            </button>
+            <button class="tab-btn" data-tab="results" id="tab-results">
+                <span class="tab-icon"></span> Detection Results (Kết quả phát hiện)
+            </button>
+            <button class="tab-btn" data-tab="graph" id="tab-graph">
+                <span class="tab-icon"></span> Graph View
+            </button>
+            <button class="tab-btn" data-tab="benchmark" id="tab-benchmark">
+                <span class="tab-icon"></span> Benchmark (Đo kiểm)
+            </button>
+            <button class="tab-btn" data-tab="topology" id="tab-topology">
+                <span class="tab-icon"></span> Topology (Cấu trúc mạng)
+            </button>
+            <button class="tab-btn" data-tab="fault" id="tab-fault">
+                <span class="tab-icon"></span> Fault Tolerance (Chịu lỗi)
+            </button>
+        </nav>
+
+        <!--  TAB: Pipeline  -->
+        <div class="tab-panel active" id="panel-pipeline">
+            
+            <!-- Demo Flow Note -->
+            <div class="card" style="margin-bottom: 24px; border-left: 4px solid var(--accent-indigo);">
+                <div class="card-header" style="margin-bottom: 8px;">
+                    <div class="card-title">Quick Demo Flow (Hướng dẫn chạy)</div>
+                </div>
+                <div style="display: flex; gap: 16px; font-weight: 500; color: var(--text-secondary); flex-wrap: wrap;">
+                    <span>1. Select Dataset (Chọn dữ liệu)</span> →
+                    <span>2. Config Partition (Cấu hình phân mảnh)</span> →
+                    <span>3. Run Pipeline (Tạo đồ thị & Bật Node)</span> →
+                    <span>4. View Graph (Xem đồ thị)</span> →
+                    <span>5. Compare Benchmark (So sánh tốc độ)</span>
+                </div>
+                <div style="margin-top: 12px; font-size: 0.85rem; color: var(--text-muted); background: var(--bg-secondary); padding: 12px; border-radius: var(--radius-sm); display: flex; justify-content: space-between;">
+                    <div>
+                        <strong>Dataset Info:</strong> 
+                        <br/>- <em>PaySim Dataset</em>: Real financial dataset from Kaggle, pre-processed into graph structure. Contains 50,000+ normal transactions and injected cross-shard fraud rings.
+                        <br/>- <em>Synthetic Dataset</em>: Auto-generated random data for stress testing.
+                    </div>
+                    <div style="border-left: 1px solid var(--border-glass); padding-left: 16px; min-width: 200px;">
+                        <strong>Current Dataset Status:</strong>
+                        <div id="uiCurrentDataset" style="color: var(--text-primary); font-weight: 600; margin-top: 4px;">Loading...</div>
+                        <div id="uiCurrentTxs" style="margin-top: 2px;">Transactions: -</div>
+                        <div id="uiCurrentStrategy" style="margin-top: 2px;">Strategy: -</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <!-- Config Panel -->
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <div class="card-title"><span class="icon"></span> Configuration (Cấu hình)</div>
+                            <div class="card-subtitle">Set dataset parameters before running the pipeline</div>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="grid-column: span 2;">
+                            <label class="form-label">Dataset Mode (Chế độ dữ liệu)</label>
+                            <select class="form-input" id="cfgDatasetMode">
+                                <option value="synthetic">Synthetic Controlled Dataset (Dữ liệu tự sinh)</option>
+                                <option value="paysim">Real PaySim Dataset (Dữ liệu thực tế Kaggle)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Partition Strategy</label>
+                            <select class="form-input" id="cfgPartitionStrategy">
+                                <option value="hash">Hash Partitioning (Random)</option>
+                                <option value="smart">Block-aware Partitioning (Graph-aware)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Accounts (Tài khoản)</label>
+                            <input type="number" class="form-input" id="cfgAccounts" value="1000" min="100">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Normal Txs (Giao dịch thường)</label>
+                            <input type="number" class="form-input" id="cfgNormalTxs" value="5000" min="500">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Partitions (Phân mảnh)</label>
+                            <input type="number" class="form-input" id="cfgPartitions" value="3" min="2" max="10">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Local Cycles (Chu trình nội bộ)</label>
+                            <input type="number" class="form-input" id="cfgLocalCycles" value="2" min="0">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Cross-Shard Cycles (Chu trình liên mảnh)</label>
+                            <input type="number" class="form-input" id="cfgCrossCycles" value="3" min="0">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Fraud Amount ($) (Số tiền gian lận)</label>
+                            <input type="number" class="form-input" id="cfgFraudAmount" value="5000" min="1000">
+                        </div>
+                    </div>
+                    <div class="btn-group" style="margin-top: 8px;">
+                        <button class="btn btn-primary btn-lg" id="btnRunPipeline" onclick="runFullPipeline()">
+                             Run Full Pipeline (Chạy toàn bộ đường ống)
+                        </button>
+                        <button class="btn btn-outline" onclick="resetConfig()">
+                            ↺ Reset Defaults (Khôi phục mặc định)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Pipeline Progress -->
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <div class="card-title"><span class="icon"></span> Pipeline Progress (Tiến trình)</div>
+                            <div class="card-subtitle">Step-by-step execution status</div>
+                        </div>
+                    </div>
+                    <div id="pipelineSteps">
+                        <div class="empty-state">
+                            <div class="empty-icon"></div>
+                            <h3>Ready to Launch (Sẵn sàng khởi chạy)</h3>
+                            <p>Configure parameters and click "Run Full Pipeline" to start the distributed fraud detection system.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick Stats -->
+            <div class="card" id="quickStatsCard" style="display: none;">
+                <div class="card-header">
+                    <div class="card-title"><span class="icon"></span> Quick Results (Kết quả nhanh)</div>
+                </div>
+                <div class="grid-4" id="quickStats"></div>
+            </div>
+
+            <!-- Log Output -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title"><span class="icon"></span> System Log (Nhật ký hệ thống)</div>
+                    <button class="btn btn-outline btn-sm" onclick="clearLog()">Clear</button>
+                </div>
+                <div class="log-output" id="logOutput">Waiting for pipeline execution...</div>
+            </div>
+        </div>
+
+        <!--  TAB: Nodes  -->
+        <div class="tab-panel" id="panel-nodes">
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <div class="card-title"><span class="icon"></span> Distributed Node Management (Quản lý nút phân tán)</div>
+                        <div class="card-subtitle">Monitor and control the 3-node Shared-Nothing cluster (Ch.1 - Introduction)</div>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-success btn-sm" onclick="startNodes()"> Start All (Bắt đầu tất cả)</button>
+                        <button class="btn btn-danger btn-sm" onclick="stopNodes()"> Stop All (Dừng tất cả)</button>
+                        <button class="btn btn-outline btn-sm" onclick="refreshNodeStatus()">↻ Refresh (Làm mới)</button>
+                    </div>
+                </div>
+                <div class="grid-3" id="nodesGrid">
+                    <div class="node-card" id="nodeCard0">
+                        <div class="node-card-header">
+                            <span class="node-name">Node 0</span>
+                            <span class="node-badge offline" id="nodeBadge0">Offline</span>
+                        </div>
+                        <div class="node-details">
+                            <span>Port: 5001</span>
+                            <span id="nodeEdges0">Edges: —</span>
+                            <span id="nodeVertices0">Vertices: —</span>
+                        </div>
+                        <div class="node-actions">
+                            <button class="btn btn-danger btn-sm" onclick="killNode(0)"> Kill (Hủy)</button>
+                            <button class="btn btn-success btn-sm" onclick="restartNode(0)"> Restart (Khởi động lại)</button>
+                        </div>
+                    </div>
+                    <div class="node-card" id="nodeCard1">
+                        <div class="node-card-header">
+                            <span class="node-name">Node 1</span>
+                            <span class="node-badge offline" id="nodeBadge1">Offline</span>
+                        </div>
+                        <div class="node-details">
+                            <span>Port: 5002</span>
+                            <span id="nodeEdges1">Edges: —</span>
+                            <span id="nodeVertices1">Vertices: —</span>
+                        </div>
+                        <div class="node-actions">
+                            <button class="btn btn-danger btn-sm" onclick="killNode(1)"> Kill (Hủy)</button>
+                            <button class="btn btn-success btn-sm" onclick="restartNode(1)"> Restart (Khởi động lại)</button>
+                        </div>
+                    </div>
+                    <div class="node-card" id="nodeCard2">
+                        <div class="node-card-header">
+                            <span class="node-name">Node 2</span>
+                            <span class="node-badge offline" id="nodeBadge2">Offline</span>
+                        </div>
+                        <div class="node-details">
+                            <span>Port: 5003</span>
+                            <span id="nodeEdges2">Edges: —</span>
+                            <span id="nodeVertices2">Vertices: —</span>
+                        </div>
+                        <div class="node-actions">
+                            <button class="btn btn-danger btn-sm" onclick="killNode(2)"> Kill (Hủy)</button>
+                            <button class="btn btn-success btn-sm" onclick="restartNode(2)"> Restart (Khởi động lại)</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Architecture Diagram Card -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title"><span class="icon"></span> System Architecture (Kiến trúc hệ thống)</div>
+                    <div class="card-subtitle">Shared-Nothing Architecture (Özsu & Valduriez, Ch.1)</div>
+                </div>
+                <div class="log-output" style="text-align: center; font-size: 0.82rem; line-height: 2; max-height: none;">
+<span class="log-info">                    </span>
+<span class="log-info">                                  Web Dashboard (Port 5000)               </span>
+<span class="log-info">                                Coordinator / Master Node                </span>
+<span class="log-info">                    </span>
+                                                    
+               <span class="log-warn">Parallel Query</span>                        <span class="log-warn">ThreadPoolExecutor</span>
+                                                    
+                      
+<span class="log-success">                       Node 0         Node 1       Node 2    </span>
+<span class="log-success">                      Port 5001      Port 5002    Port 5003  </span>
+<span class="log-success">                      Partition 0   Partition 1  Partition 2 </span>
+                      
+                                                         
+                            <span class="log-error">HTTP POST /expand_path</span> 
+                                 <span class="log-warn">(Cross-Shard DFS Traversal)</span>
+                </div>
+            </div>
+        </div>
+
+        <!--  TAB: Results  -->
+        <div class="tab-panel" id="panel-results">
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <div class="card-title"><span class="icon"></span> Detected Fraud Rings (Đường dây gian lận đã phát hiện)</div>
+                        <div class="card-subtitle">4-vertex cycles with identical transfer amounts</div>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary btn-sm" onclick="runDetection()"> Run Detection (Chạy dò tìm)</button>
+                        <button class="btn btn-outline btn-sm" onclick="document.getElementById('tab-graph').click()"> Open Graph View</button>
+                    </div>
+                </div>
+
+                <!-- Summary Stats -->
+                <div class="grid-4" id="detectionStats" style="margin-bottom: 20px;">
+                    <div class="stat-card">
+                        <div class="stat-label">Total Cycles (Tổng chu trình)</div>
+                        <div class="stat-value indigo" id="statTotalCycles">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Local Cycles (Chu trình nội bộ)</div>
+                        <div class="stat-value emerald" id="statLocalCycles">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Cross-Shard Cycles (Chu trình liên mảnh)</div>
+                        <div class="stat-value amber" id="statCrossShardCycles">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Detection Time (Thời gian dò tìm)</div>
+                        <div class="stat-value cyan" id="statDetectionTime">—</div>
+                    </div>
+                </div>
+
+                <!-- Cycle List -->
+                <div id="cycleList">
+                    <div class="empty-state">
+                        <div class="empty-icon"></div>
+                        <h3>No Detection Results (Không có kết quả)</h3>
+                        <p>Run the pipeline first, then click "Run Detection" to find fraud rings.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Performance Breakdown -->
+            <div class="card" id="perfCard" style="display: none;">
+                <div class="card-header">
+                    <div class="card-title"><span class="icon"></span> Performance Breakdown (Hiệu suất)</div>
+                    <div class="card-subtitle">Cost Model: Total_Cost = I/O + CPU + Communication (Ch.4)</div>
+                </div>
+                <div class="grid-3" id="perfStats"></div>
+            </div>
+        </div>
+
+        <!--  TAB: Graph View  -->
+        <div class="tab-panel" id="panel-graph">
+            <div class="grid-3" style="grid-template-columns: 2fr 1fr; gap: 24px;">
+                <div class="card" style="margin-bottom: 0;">
+                    <div class="card-header">
+                        <div>
+                            <div class="card-title"><span class="icon"></span> Distributed Graph Visualization (Trực quan đồ thị)</div>
+                            <div class="card-subtitle">Nodes colored by shard. Fraud cycles highlighted in red.</div>
+                        </div>
+                        <div class="btn-group">
+                            <button class="btn btn-primary btn-sm" onclick="renderGraph()"> Refresh Graph</button>
+                        </div>
+                    </div>
+                    <div id="d3Container" style="width: 100%; height: 600px; background: var(--bg-primary); border-radius: var(--radius-md); border: 1px solid var(--border-color); overflow: hidden; position: relative;">
+                        <div id="graphLoading" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); display: none;">Loading graph data...</div>
+                        <svg id="graphSvg" style="width: 100%; height: 100%;"></svg>
+                    </div>
+                </div>
+                
+                <div class="card" style="margin-bottom: 0;">
+                    <div class="card-header">
+                        <div class="card-title"><span class="icon">ℹ</span> Node Metadata (Thông tin đỉnh)</div>
+                    </div>
+                    <div id="nodeInfoPanel">
+                        <div class="empty-state" style="padding: 20px;">
+                            <div class="empty-icon"></div>
+                            <p>Click on a node to view its relational metadata.</p>
+                        </div>
+                    </div>
+                    <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border-color);">
+                        <h4 style="margin-bottom: 15px; color: var(--text-primary);">Legend (Chú giải)</h4>
+                        <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                            <div style="width: 16px; height: 16px; border-radius: 50%; background: #3b82f6; margin-right: 12px;"></div> <span style="color: var(--text-secondary);">Shard 0</span>
+                        </div>
+                        <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                            <div style="width: 16px; height: 16px; border-radius: 50%; background: #10b981; margin-right: 12px;"></div> <span style="color: var(--text-secondary);">Shard 1</span>
+                        </div>
+                        <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                            <div style="width: 16px; height: 16px; border-radius: 50%; background: #f59e0b; margin-right: 12px;"></div> <span style="color: var(--text-secondary);">Shard 2</span>
+                        </div>
+                        <div style="display: flex; align-items: center; margin-bottom: 8px; margin-top: 16px;">
+                            <div style="width: 24px; height: 3px; background: #ef4444; margin-right: 12px;"></div> <span style="color: var(--text-secondary);">Fraud Edge (Gian lận)</span>
+                        </div>
+                        <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                            <div style="width: 24px; height: 3px; background: #94a3b8; margin-right: 12px; border-bottom: 2px dashed #475569;"></div> <span style="color: var(--text-secondary);">Cross-Shard Edge</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!--  TAB: Benchmark  -->
+        <div class="tab-panel" id="panel-benchmark">
+            <div class="grid-2">
+                <!-- Benchmark Config -->
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <div class="card-title"><span class="icon"></span> Run Benchmark (Chạy đo kiểm)</div>
+                            <div class="card-subtitle">Execute tests with varying parameters for comparison</div>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Label</label>
+                            <input type="text" class="form-input" id="benchLabel" placeholder="e.g., Test 5K txs">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Normal Txs (Giao dịch thường)</label>
+                            <input type="number" class="form-input" id="benchTxs" value="5000" min="500">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Accounts (Tài khoản)</label>
+                            <input type="number" class="form-input" id="benchAccounts" value="1000" min="100">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Local Cycles (Chu trình nội bộ)</label>
+                            <input type="number" class="form-input" id="benchLocalCycles" value="2" min="0">
+                        </div>
+                        <div class="form-group">
+                        <div class="form-group">
+                            <label class="form-label">Cross Cycles</label>
+                            <input type="number" class="form-input" id="benchCrossCycles" value="3" min="0">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="grid-column: span 2;">
+                            <label class="form-label">Dataset Mode (Chế độ dữ liệu)</label>
+                            <select class="form-input" id="benchDatasetMode">
+                                <option value="synthetic">Synthetic Controlled Dataset</option>
+                                <option value="paysim">Real PaySim Dataset</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Partition Strategy</label>
+                            <select class="form-input" id="benchPartitionStrategy">
+                                <option value="hash">Hash Partitioning (Random)</option>
+                                <option value="smart">Block-aware Partitioning (Graph-aware)</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-bottom: 16px; font-size: 0.85rem; color: var(--text-muted); background: var(--bg-secondary); padding: 12px; border-radius: var(--radius-sm); border-left: 4px solid var(--accent-indigo);">
+                        <strong>Centralized vs Distributed Benchmark</strong><br/>
+                        - <em>Centralized mode</em> moves the whole graph to one coordinator node to compute (High Data Transfer, 1 CPU).<br/>
+                        - <em>Distributed mode</em> keeps data at each shard and only exchanges candidate paths via Network Messages (Parallel CPU).
+                    </div>
+
+                    <div class="btn-group">
+                        <button class="btn btn-primary" id="btnBenchmark" onclick="runBenchmark()">
+                             Run Benchmark (Chạy đo kiểm)
+                        </button>
+                        <button class="btn btn-outline" onclick="runPresetBenchmarks()">
+                             Run Preset Suite (Chạy theo bộ có sẵn)
+                        </button>
+                        <button class="btn btn-primary" onclick="runCompareBenchmark()">
+                             Compare Centralized vs Distributed
+                        </button>
+                        <button class="btn btn-danger btn-sm" onclick="clearBenchmarkHistory()">
+                             Clear History (Xóa lịch sử)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Detection Time Chart -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title"><span class="icon"></span> Detection Time Comparison (So sánh thời gian dò tìm)</div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="chartDetectionTime"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <!-- Network Messages Chart -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title"><span class="icon"></span> Network Messages vs Dataset Size (Tin nhắn mạng)</div>
+                        <div class="card-subtitle">Communication Cost analysis (Ch.4 - Query Processing)</div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="chartNetworkMessages"></canvas>
+                    </div>
+                </div>
+
+                <!-- Edge-Cut Ratio Chart -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title"><span class="icon"></span> Edge-Cut Ratio Trend (Xu hướng tỷ lệ cắt cạnh)</div>
+                        <div class="card-subtitle">Graph partitioning quality analysis (Category 14)</div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="chartEdgeCut"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Centralized vs Distributed Comparison Result -->
+            <div class="card" id="compareCard" style="display: none;">
+                <div class="card-header">
+                    <div class="card-title"><span class="icon"></span> Centralized vs Distributed Analysis (Category 14)</div>
+                    <div class="card-subtitle">Comparing the performance of a single-node setup vs multi-node partitioned setup</div>
+                </div>
+                <div style="overflow-x: auto;">
+                    <table class="benchmark-table">
+                        <thead>
+                            <tr>
+                                <th>Architecture</th>
+                                <th>Cycles Found</th>
+                                <th>Execution Time (ms)</th>
+                                <th>Network Messages</th>
+                                <th>Local Ops (CPU)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="compareTableBody">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+                <div style="margin-top: 16px; padding: 16px; background: var(--bg-glass); border-radius: var(--radius-md); border: 1px solid var(--border-glass);" id="compareAnalysis">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Benchmark History Table -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title"><span class="icon"></span> Benchmark History (Lịch sử đo kiểm)</div>
+                </div>
+                <div style="overflow-x: auto;">
+                    <table class="benchmark-table" id="benchmarkTable">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Label</th>
+                                <th>Txs</th>
+                                <th>Accounts</th>
+                                <th>Cycles Found</th>
+                                <th>Detection (ms)</th>
+                                <th>Net Messages</th>
+                                <th>Edge-Cut %</th>
+                                <th>Replication</th>
+                            </tr>
+                        </thead>
+                        <tbody id="benchmarkTableBody">
+                            <tr><td colspan="9" style="text-align: center; color: var(--text-muted); padding: 24px;">No benchmark data yet</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!--  TAB: Topology  -->
+        <div class="tab-panel" id="panel-topology">
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <div class="card-title"><span class="icon"></span> Topology Analysis (Phân tích mạng)</div>
+                        <div class="card-subtitle">Graph partitioning metrics (Ch.2 - Distributed Database Design)</div>
+                    </div>
+                </div>
+                <div class="grid-4" id="topologyStats">
+                    <div class="stat-card">
+                        <div class="stat-label">Total Vertices (Tổng số đỉnh)</div>
+                        <div class="stat-value indigo" id="topoVertices">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Total Edges (Tổng số cạnh)</div>
+                        <div class="stat-value emerald" id="topoEdges">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Edge-Cut Ratio (Tỷ lệ cắt cạnh)</div>
+                        <div class="stat-value amber" id="topoEdgeCut">—</div>
+                        <div class="stat-change">Lower is better</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Replication Factor (Hệ số nhân bản)</div>
+                        <div class="stat-value cyan" id="topoReplication">—</div>
+                        <div class="stat-change">1.0 = no replication</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <!-- Partition Distribution Chart -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title"><span class="icon"></span> Partition Edge Distribution (Phân bố cạnh)</div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="chartPartitionDist"></canvas>
+                    </div>
+                </div>
+
+                <!-- Partition Vertex Distribution Chart -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title"><span class="icon"></span> Partition Vertex Distribution (Phân bố đỉnh)</div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="chartVertexDist"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Textbook Reference Card -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title"><span class="icon"></span> Theoretical Foundation (Cơ sở lý thuyết)</div>
+                </div>
+                <div class="log-output" style="max-height: none; line-height: 2;">
+<span class="log-info"> Hash-based Vertex-Home Edge-Cut Partitioning </span>
+
+<span class="log-warn">HomeNode(V) = Hash(V) % K</span>   where K = number of sites
+
+<span class="log-success">Strategy:</span> All outgoing edges of vertex V are stored at HomeNode(V).
+         This co-locates adjacency data for efficient local lookups.
+
+<span class="log-success">Edge-Cut Ratio</span> = (Cut Edges / Total Edges) × 100%
+    - A "cut edge" is one where source and destination have different home nodes.
+    - <span class="log-warn">Lower ratio = better partitioning = less cross-shard communication.</span>
+
+<span class="log-success">Vertex Replication Factor</span> = Σ(partitions each vertex appears in) / Total Vertices
+    - Factor of 1.0 = each vertex appears in exactly one partition (no replication).
+    - Higher factor = more replication overhead but potentially faster local lookups.
+
+<span class="log-info"> Cost Model (Ch.4 - Query Processing) </span>
+
+<span class="log-warn">Total_Cost = I/O_Cost + CPU_Cost + Communication_Cost</span>
+
+    - <span class="log-error">Communication_Cost is the dominant bottleneck</span> in distributed systems.
+    - Each cross-shard path expansion = 1 HTTP network message.
+    - Goal: Minimize network messages while maintaining detection accuracy.
+                </div>
+            </div>
+        </div>
+
+        <!--  TAB: Fault Tolerance  -->
+        <div class="tab-panel" id="panel-fault">
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <div class="card-title"><span class="icon"></span> Fault Tolerance Testing (Kiểm tra chịu lỗi)</div>
+                        <div class="card-subtitle">Simulate node failures and verify system resilience (Ch.5 - Transaction Management)</div>
+                    </div>
+                </div>
+
+                <div class="grid-3" style="margin-bottom: 20px;">
+                    <div class="stat-card">
+                        <div class="stat-label">Suggested Demo Flow</div>
+                        <div style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 8px;">
+                            1. Start all nodes.<br>
+                            2. Kill Node 1.<br>
+                            3. Run detection.<br>
+                            4. Observe partial results and failed request count.<br>
+                            5. Restart Node 1.<br>
+                            6. Run detection again and compare.
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Expected Behavior</div>
+                        <div style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 8px;">
+                            • System should NOT crash or hang<br>
+                            • Local cycles may still be found<br>
+                            • Cross-shard cycles through killed node fail gracefully<br>
+                            • Timeout-based fault detection
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Textbook Reference</div>
+                        <div style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 8px;">
+                            • Ch.5: Distributed Transaction Management<br>
+                            • Fault tolerance via graceful degradation<br>
+                            • RequestException handling = crash detection
+                        </div>
+                    </div>
+                </div>
+
+                <div class="btn-group" style="margin-bottom: 20px;">
+                    <button class="btn btn-primary btn-lg" onclick="runFaultTest()">
+                         Run Full Fault Tolerance Test (Chạy kiểm tra chịu lỗi)
+                    </button>
+                </div>
+
+                <!-- Fault Test Results -->
+                <div id="faultTestResults">
+                    <div class="empty-state">
+                        <div class="empty-icon"></div>
+                        <h3>No Test Executed (Chưa chạy kiểm tra)</h3>
+                        <p>Click the button above to run a complete fault tolerance simulation.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Fault Test Comparison Chart -->
+            <div class="card" id="faultChartCard" style="display: none;">
+                <div class="card-header">
+                    <div class="card-title"><span class="icon"></span> Healthy vs Degraded Performance (Hiệu suất khi bình thường và suy giảm)</div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="chartFaultComparison"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/charts.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

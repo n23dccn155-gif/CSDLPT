@@ -521,7 +521,7 @@ function updateDetectionUI(data) {
                 <td style="padding: 12px 8px; font-family: monospace;">${enrichedPath}</td>
                 <td style="padding: 12px 8px; font-family: monospace;">${shardPath}</td>
                 <td style="padding: 12px 8px; font-family: monospace;">${formatAmount(c.amount)}</td>
-                <td style="padding: 12px 8px;"><span class="cycle-type ${c.type}">${c.type === 'LOCAL' ? 'NỘI BỘ' : 'LIÊN NODE'}</span></td>
+                <td style="padding: 12px 8px;"><span class="cycle-type ${c.type}">${c.type === 'local' ? 'NỘI BỘ' : 'LIÊN NODE'}</span></td>
                 <td style="padding: 12px 8px;">
                     <button class="btn btn-outline btn-sm" onclick="document.getElementById('tab-graph').click()" style="padding: 4px 8px; font-size: 0.8rem;">Đồ thị</button>
                     <button class="btn btn-outline btn-sm" onclick="showTrace(${idx})" style="padding: 4px 8px; font-size: 0.8rem;">Dò tìm</button>

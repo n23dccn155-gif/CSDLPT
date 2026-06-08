@@ -1,6 +1,9 @@
+import sys
 from pathlib import Path
 
 import pandas as pd
+
+sys.stdout.reconfigure(encoding='utf-8')
 
 
 INPUT_PATH = Path("data/financial_transactions.csv")
@@ -22,10 +25,10 @@ OLD_INJECTED_ACCOUNTS = {
 
 def build_cycle(accounts, amount):
     """
-    Create a controlled A -> B -> C -> D -> A fraud-ring test cycle.
+    Tạo một chu kỳ kiểm thử vòng lặp gian lận có kiểm soát A -> B -> C -> D -> A.
 
-    IsFraud remains 1 for compatibility with the PaySim label shape.
-    IsCycleFraud=1 is the actual candidate flag used by distributed DFS.
+    IsFraud vẫn giữ giá trị 1 để tương thích với định dạng nhãn của PaySim.
+    IsCycleFraud=1 là cờ đánh dấu ứng viên thực tế được sử dụng bởi thuật toán DFS phân tán.
     """
     rows = []
     for i, from_acc in enumerate(accounts):
@@ -42,10 +45,10 @@ def build_cycle(accounts, amount):
 
 def choose_cycle_accounts(account_ids, residues, min_first, used):
     """
-    Pick existing PaySim AccountID values whose modulo pattern matches residues.
+    Chọn các giá trị AccountID hiện có của PaySim có dạng chia dư (modulo) khớp với residues.
 
-    The selected IDs are strictly increasing so the first account is the minimum
-    ID in the cycle. That preserves the Minimum-ID rule in node.py.
+    Các ID được chọn tăng dần nghiêm ngặt để tài khoản đầu tiên là ID nhỏ nhất
+    trong chu kỳ. Điều này tuân thủ quy tắc ID nhỏ nhất (Minimum-ID) trong node.py.
     """
     first_candidates = [
         acc
@@ -82,7 +85,7 @@ def choose_cycle_accounts(account_ids, residues, min_first, used):
 
 
 def clean_previous_injections(df, controlled_edges):
-    """Remove old controlled test edges before appending the current ones."""
+    """Xóa các cạnh kiểm thử đã được chèn trước đó trước khi thêm các cạnh hiện tại."""
     is_cycle_fraud = df["IsCycleFraud"].fillna(0).astype(int) == 1
     from_old_fake_accounts = (
         df["FromAccount"].isin(OLD_INJECTED_ACCOUNTS)
@@ -110,7 +113,7 @@ def main():
     account_ids = sorted(int(acc) for acc in mapping_df["AccountID"].dropna().astype(int).unique())
     used = set()
 
-    # Two cross-shard cycles and one local cycle, all using existing PaySim IDs.
+    # Hai chu kỳ xuyên phân mảnh (cross-shard) và một chu kỳ cục bộ (local), đều sử dụng các ID PaySim hiện có.
     cycle1 = choose_cycle_accounts(account_ids, [1, 2, 0, 1], 100, used)
     cycle2 = choose_cycle_accounts(account_ids, [2, 0, 1, 2], cycle1[-1] + 1, used)
     cycle3 = choose_cycle_accounts(account_ids, [0, 0, 0, 0], cycle2[-1] + 1, used)
@@ -129,7 +132,7 @@ def main():
     result = pd.concat([df_clean, pd.DataFrame(injected_rows)], ignore_index=True)
     result.to_csv(INPUT_PATH, index=False, encoding="utf-8")
 
-    # Remove legacy fake mapping rows from earlier versions of the script.
+    # Xóa các dòng ánh xạ giả kế thừa từ các phiên bản trước của kịch bản.
     original_account = mapping_df.get("OriginalAccount")
     if original_account is not None:
         legacy_mapping = original_account.fillna("").astype(str).str.startswith("INJECT_")
@@ -143,11 +146,11 @@ def main():
     ]
     mapping_clean.to_csv(MAPPING_PATH, index=False, encoding="utf-8")
 
-    print(f"Wrote {len(result)} transactions with {len(injected_rows)} controlled cycle edges.")
-    print("Controlled fraud-ring test cycles use existing PaySim AccountID values:")
-    print(f"  Cycle 1 (Cross-shard): {cycle1} | amount=900,000")
-    print(f"  Cycle 2 (Cross-shard): {cycle2} | amount=1,500,000")
-    print(f"  Cycle 3 (Local/Shard0): {cycle3} | amount=2,500,000")
+    print(f"Đã ghi {len(result)} giao dịch với {len(injected_rows)} cạnh chu kỳ được kiểm soát.")
+    print("Các chu kỳ kiểm thử vòng lặp gian lận có kiểm soát sử dụng các giá trị AccountID PaySim hiện có:")
+    print(f"  Chu kỳ 1 (Xuyên phân mảnh - Cross-shard): {cycle1} | số tiền=900,000")
+    print(f"  Chu kỳ 2 (Xuyên phân mảnh - Cross-shard): {cycle2} | số tiền=1,500,000")
+    print(f"  Chu kỳ 3 (Cục bộ/Phân mảnh 0 - Local/Shard0): {cycle3} | số tiền=2,500,000")
 
 
 if __name__ == "__main__":

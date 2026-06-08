@@ -97,8 +97,6 @@ Trên giao diện web, chạy lần lượt **4 bước** trong tab **Pipeline**
 ```text
 fraud-ring-detection/
 ├── README.md
-├── project_explanation.md       # Giải thích chi tiết logic từng file
-├── huong_dan_bao_ve_do_an.md    # Hướng dẫn bảo vệ đồ án
 ├── requirements.txt
 ├── backend/
 │   ├── app.py              # Web API server & Quản lý tiến trình (Process manager)

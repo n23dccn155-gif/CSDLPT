@@ -1,21 +1,20 @@
 import pandas as pd
-import numpy as np
 from pathlib import Path
 
 RAW_PATH = Path("../data/raw/PS_20174392719_1491204439457_log.csv")
 OUT_TX_PATH = Path("../data/financial_transactions.csv")
-OUT_META_PATH = Path("../data/account_metadata.csv")
+OUT_MAPPING_PATH = Path("../data/account_mapping.csv")
 
 # Dùng số dòng vừa phải để app chạy ổn khi demo.
 MAX_ROWS = 50000
 
 def main():
-    global RAW_PATH, OUT_TX_PATH, OUT_META_PATH
+    global RAW_PATH, OUT_TX_PATH, OUT_MAPPING_PATH
     if not RAW_PATH.exists():
         # Fallback to local path if run from root
         RAW_PATH = Path("data/raw/PS_20174392719_1491204439457_log.csv")
         OUT_TX_PATH = Path("data/financial_transactions.csv")
-        OUT_META_PATH = Path("data/account_metadata.csv")
+        OUT_MAPPING_PATH = Path("data/account_mapping.csv")
         
         if not RAW_PATH.exists():
             raise FileNotFoundError(f"Không tìm thấy file PaySim gốc: {RAW_PATH}")
@@ -54,20 +53,14 @@ def main():
     out_tx.to_csv(OUT_TX_PATH, index=False, encoding="utf-8")
     print(f"Đã ghi file giao dịch: {OUT_TX_PATH}")
 
-    # 3. FILE METADATA CHO MULTI-MODEL INTEGRATION
-    np.random.seed(42)
-    countries = ["Vietnam", "Singapore", "Thailand", "USA", "UK", "Japan"]
-    
-    out_meta = pd.DataFrame({
+    # 3. FILE MAPPING CHO MULTI-MODEL INTEGRATION
+    out_mapping = pd.DataFrame({
         "AccountID": list(account_map.values()),
         "OriginalAccount": list(account_map.keys()),
-        "AccountType": ["Personal" if acc.startswith('C') else "Business" for acc in account_map.keys()],
-        "Country": np.random.choice(countries, len(account_map)),
-        "RiskScore": np.round(np.random.uniform(0.1, 0.9, len(account_map)), 2)
     })
     
-    out_meta.to_csv(OUT_META_PATH, index=False, encoding="utf-8")
-    print(f"Đã ghi file metadata: {OUT_META_PATH}")
+    out_mapping.to_csv(OUT_MAPPING_PATH, index=False, encoding="utf-8")
+    print(f"Đã ghi file mapping: {OUT_MAPPING_PATH}")
 
 if __name__ == "__main__":
     main()

@@ -1,142 +1,140 @@
-# 🔍 Distributed Fraud Ring Detection
+# Distributed Fraud Ring Detection (Phát hiện đường dây gian lận phân tán)
 
-> **INT1414 - Distributed Database Systems | Project #136**  
-> Category 14: Graph & Multi-Model Distributed DBs  
-> Semester 2, 2025-2026
+> **INT1414 - Distributed Database Systems (Hệ quản trị CSDL phân tán) | Đồ án #136**
+> Chuyên đề 14: Graph & Multi-Model Distributed DBs (CSDL Đồ thị & Đa mô hình phân tán)
+> Học kỳ 2, 2025-2026
 
-## 📋 Overview
+## Tổng quan
 
-This project implements a **Distributed Graph Pattern Matching** system to detect **Fraud Rings** in financial transaction data. A fraud ring is a cycle of 4 accounts transferring the same amount of money in a loop (A→B→C→D→A), indicative of money laundering or circular debt schemes.
+Dự án này triển khai một hệ thống **Distributed Graph Pattern Matching (Khớp mẫu đồ thị phân tán)** để phát hiện các **Fraud Rings (Đường dây gian lận)** trong dữ liệu giao dịch tài chính. Một đường dây gian lận là một chu trình (cycle) gồm các tài khoản chuyển tiền cho nhau tạo thành một vòng khép kín (Ví dụ: A→B→C→D→A), dấu hiệu đặc trưng của hành vi rửa tiền hoặc tín dụng đen.
 
-The system distributes the transaction graph across **3 independent nodes** (Shared-Nothing architecture) and performs **Distributed DFS (Depth-First Search)** with cross-shard path expansion to detect fraud cycles that span multiple nodes.
+Hệ thống phân tán đồ thị giao dịch lên **3 máy chủ độc lập (independent nodes)** hoạt động theo kiến trúc **Shared-Nothing (Không chia sẻ tài nguyên)** và thực hiện thuật toán **Distributed DFS (Depth-First Search - Tìm kiếm theo chiều sâu phân tán)** kết hợp với Cross-shard path expansion (Mở rộng đường đi liên mảnh) để phát hiện các chu trình gian lận trải dài trên nhiều máy chủ.
 
-### 🌟 Key Features & Updates
-- **Real-world Kaggle Dataset**: Uses the PaySim Synthetic Financial Dataset, mapping string accounts to integers for optimized graph partitioning.
-- **Multi-Model Integration**: Combines distributed graph structure (`financial_transactions.csv`) with relational metadata (`account_metadata.csv`) which is joined dynamically during visualization.
-- **Centralized vs Distributed Benchmark**: Proves the performance characteristics and network cost models of distributed databases directly against a single-node baseline.
-- **Interactive Graph Visualization**: D3.js-powered visualizer for fraud rings and shards.
-- **Smart Partitioning**: Compare Hash-based Partitioning with Block-aware/Graph-aware Partitioning to observe the reduction in edge-cuts and network traffic.
+### Tính năng chính (Key Features)
 
-## 🏗️ Architecture
+- **Real-world Kaggle Dataset (Dữ liệu thực tế)**: Sử dụng tập dữ liệu giao dịch tài chính PaySim, ánh xạ (mapping) tài khoản chuỗi sang số nguyên để tối ưu hóa quá trình phân mảnh đồ thị (graph partitioning).
+- **Lightweight Graph + Relational Mapping (Đồ thị nhẹ + Ánh xạ quan hệ)**: Kết hợp cấu trúc đồ thị phân tán (`financial_transactions.csv`) với bảng ánh xạ quan hệ (`account_mapping.csv`) để nối `AccountID` nội bộ về mã tài khoản gốc của PaySim khi hiển thị.
+- **Interactive Graph Visualization (Hiển thị đồ thị tương tác)**: Sử dụng D3.js để vẽ trực quan các đường dây gian lận và các mảnh dữ liệu (shards).
+- **Fault Tolerance (Khả năng chịu lỗi)**: Có khả năng tiếp tục truy vấn dò tìm ngay cả khi một trong các máy chủ phân mảnh bị tắt (offline), hệ thống vẫn trả về các kết quả cục bộ (partial results).
+- **Streamlined Architecture (Kiến trúc tinh gọn)**: Sử dụng thuần túy chiến lược Hash-based Partitioning (Phân mảnh theo hàm băm) để chứng minh một hệ thống phân tán cơ bản, rõ ràng và có độ ổn định cao.
+
+## Kiến trúc Hệ thống (Architecture)
 
 ```text
 ┌─────────────────────────────────────────────┐
-│         Web Dashboard (Port 5000)           │
+│         Web Dashboard (Cổng 5000)           │
 │         Coordinator / Master Node           │
+│         (Máy chủ Điều phối)                 │
 └──────────┬──────────┬──────────┬────────────┘
-           │          │          │  (Parallel Query)
+           │          │          │  (Parallel Query - Truy vấn song song)
     ┌──────┴───┐ ┌────┴─────┐ ┌─┴──────────┐
     │  Node 0  │ │  Node 1  │ │   Node 2   │
-    │ Port 5001│ │ Port 5002│ │  Port 5003 │
+    │ Cổng 5001│ │ Cổng 5002│ │ Cổng 5003  │
     └────┬─────┘ └────┬─────┘ └─────┬──────┘
          │            │             │
          └── HTTP POST /expand_path ┘
-              (Cross-Shard DFS)
+              (Cross-Shard DFS - Duyệt liên mảnh)
 ```
 
-## 📚 Textbook References
+## Tham chiếu Giáo trình (Textbook References)
 
-Based on **Principles of Distributed Database Systems** (Özsu & Valduriez, 4th Edition, 2020):
+Dựa trên giáo trình **Principles of Distributed Database Systems** (Özsu & Valduriez, 4th Edition, 2020):
 
-| Chapter | Concept Applied |
-|---------|----------------|
-| Ch.1 Introduction | Shared-Nothing Architecture, Site/Node independence |
-| Ch.2 Distributed Database Design | Hash-based vs Block-aware Partitioning, Horizontal Fragmentation |
-| Ch.4 Query Processing | Cost Model (I/O + CPU + Communication), Distributed query optimization |
-| Ch.5 Transaction Management | Fault tolerance, graceful degradation under node failure |
-| Ch.6 Data Replication | Vertex Replication Factor analysis |
-| Ch.8 Parallel Database Systems | Parallel query dispatch via ThreadPoolExecutor |
+| Chương                                                            | Khái niệm áp dụng                                                                                                                |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Ch.1 Introduction (Giới thiệu)                                    | Shared-Nothing Architecture (Kiến trúc không chia sẻ), Site/Node independence (Tính độc lập dữ liệu trên các máy trạm) |
+| Ch.2 Distributed Database Design (Thiết kế CSDL phân tán)       | Hash-based Partitioning (Phân mảnh theo hàm băm), Horizontal Fragmentation (Phân mảnh ngang)                                   |
+| Ch.4 Query Processing (Xử lý truy vấn)                           | Cost Model (Mô hình chi phí: Communication vs Local Ops), Distributed query optimization (Tối ưu hóa truy vấn phân tán)     |
+| Ch.5 Reliability / Failure Handling (Tính tin cậy / Xử lý lỗi) | Mô phỏng node failure, kill/restart node, xử lý partial results khi node offline                                                 |
+| Ch.10 Graph Processing (Xử lý đồ thị)                          | Graph partitioning, edge-cut ratio, boundary vertices (Phân mảnh đồ thị, tỷ lệ cạnh cắt, đỉnh biên)                      |
+| Ch.8 Parallel Database Systems (Hệ thống CSDL song song)          | Parallel query dispatch (Gửi truy vấn song song) thông qua ThreadPoolExecutor                                                     |
 
-## ⚡ Quick Start
+## Hướng dẫn chạy nhanh (Quick Start)
 
-### Prerequisites
+### Yêu cầu hệ thống (Prerequisites)
+
 - Python 3.8+
 - pip
 
-### Installation
+### Cài đặt (Installation)
 
 ```bash
 cd fraud-ring-detection
 pip install -r requirements.txt
 ```
 
-### Dataset Preparation (PaySim)
-*Note: The system supports both synthetic data and real PaySim data.*
-To prepare the real PaySim dataset (which is required for the full experience):
+### Chuẩn bị dữ liệu (Dataset Preparation - PaySim)
+
+*Ghi chú: Repository đã bao gồm sẵn một tập dữ liệu mẫu đã được xử lý (processed sample dataset) trong thư mục `data/` để có thể chạy demo nhanh mà không cần chạy lại các script này.*
+
+Chạy các kịch bản sau một lần duy nhất để chuẩn bị dữ liệu PaySim thật và cấy (inject) các chu trình lừa đảo vào để demo:
+
 ```bash
-# 1. Convert PaySim string accounts to integers and extract metadata
+# 1. Chuyển đổi mã tài khoản PaySim sang số nguyên và trích xuất siêu dữ liệu
 python scripts/import_paysim.py
 
-# 2. Inject controlled fraud cycles for verification
+# 2. Cấy các chu trình lừa đảo mẫu vào dữ liệu để kiểm chứng thuật toán
 python scripts/inject_fraud_cycles.py
 ```
 
-### Run the System
+### Chạy Hệ thống (Run the System)
 
 ```bash
 python backend/app.py
 ```
-Open **http://localhost:5000** in your browser.
 
-Select **Dataset Mode: Real PaySim Dataset** and run the pipeline!
+Mở trình duyệt và truy cập **http://localhost:5000/**.
 
-## 📂 Project Structure
+Trên giao diện web, chạy lần lượt **4 bước** trong tab **Pipeline**:
+
+1. **Kiểm tra dữ liệu** — Xác nhận file CSV đã sẵn sàng
+2. **Phân mảnh đồ thị** — Phân chia đồ thị thành 3 mảnh theo Hash Partitioning
+3. **Khởi động Node** — Khởi động 3 máy chủ phân tán (cổng 5001–5003)
+4. **Dò tìm chu trình** — Thực thi Distributed DFS để phát hiện fraud rings
+
+## Cấu trúc Dự án (Project Structure)
 
 ```text
 fraud-ring-detection/
 ├── README.md
-├── huong_dan_bao_ve_do_an.md    # Defense guide (Vietnamese)
+├── project_explanation.md       # Giải thích chi tiết logic từng file
+├── huong_dan_bao_ve_do_an.md    # Hướng dẫn bảo vệ đồ án
 ├── requirements.txt
 ├── backend/
-│   ├── app.py              # Web API server & dashboard
-│   ├── generate_data.py     # Synthetic transaction data generator
-│   ├── partition.py         # Graph partitioning engine (Hash & Block-aware)
-│   ├── node.py              # Distributed node server (Flask)
-│   └── coordinator.py       # Query coordinator with parallel dispatch (Distributed & Centralized)
+│   ├── app.py              # Web API server & Quản lý tiến trình (Process manager)
+│   ├── partition.py         # Bộ máy phân mảnh đồ thị (Graph partitioning engine)
+│   ├── node.py              # Máy chủ con phân tán (Distributed node server)
+│   └── coordinator.py       # Máy chủ điều phối với cơ chế gửi lệnh song song
 ├── scripts/
-│   ├── import_paysim.py    # Preprocesses Kaggle PaySim data
-│   └── inject_fraud_cycles.py
+│   ├── import_paysim.py    # Xử lý trước (Preprocess) dữ liệu Kaggle PaySim
+│   └── inject_fraud_cycles.py # Thêm các chu trình gian lận mẫu vào dataset
 ├── frontend/
-│   ├── index.html           # Dashboard UI
-│   ├── css/style.css        # Premium dark theme
+│   ├── index.html           # Giao diện hiển thị (Dashboard UI)
+│   ├── css/style.css        # Giao diện làm đẹp CSS sáng màu
 │   └── js/
-│       ├── app.js           # Application logic
-│       └── charts.js        # Chart.js visualizations
-└── data/                    # Generated data & benchmark JSON (gitignored)
-    ├── financial_transactions.csv        # Main graph dataset
-    └── account_metadata.csv              # Relational metadata
+│       ├── app.js           # Logic điều khiển ứng dụng
+│       └── charts.js        # Vẽ biểu đồ trực quan (Chart.js)
+└── data/                    # Dữ liệu
+    ├── financial_transactions.csv        # Sample data đã xử lý (có sẵn trong repo)
+    ├── account_mapping.csv               # Bảng ánh xạ AccountID -> OriginalAccount (có sẵn trong repo)
+    └── partition_*.json                  # Tạo tự động khi chạy bước "Phân mảnh đồ thị"
 ```
 
-## 🔬 Key Algorithms
+## Thuật toán Cốt lõi (Key Algorithms)
 
-### Partitioning Strategies (Ch.2)
-- **Hash Partitioning (Baseline)**: `HomeNode(V) = V % K`. Scatters data randomly, good load balance, high network cost.
-- **Block-aware Partitioning (Smart)**: `HomeNode(V) = (V // 50) % K`. Groups temporally close nodes into the same shard, minimizing edge-cuts and network traffic.
+### Chiến lược Phân mảnh (Partitioning Strategy - Ch.2)
 
-### Distributed DFS (Path Expansion)
-1. Each node scans its local edges for potential cycle starts
-2. When a path reaches a vertex on another node, an HTTP POST forwards the partial path
-3. The receiving node continues the DFS locally
-4. **Minimum-ID Rule**: Only starts cycles from the smallest vertex ID to avoid duplicates
+- **Hash Partitioning (Phân mảnh theo hàm băm)**: `HomeNode(V) = V % K`. Phân tán dữ liệu ngẫu nhiên, tạo sự cân bằng tải (load balance) tốt, xử lý phân phối ID một cách đồng đều.
 
-### Cost Model
-```
-Total_Cost = I/O_Cost + CPU_Cost + Communication_Cost
-```
-Communication_Cost (network messages) is the dominant factor, tracked in real-time.
+### Distributed DFS (Tìm kiếm theo chiều sâu phân tán)
 
-## 📊 Grading Criteria (Category 14)
+1. Mỗi node quét các cạnh cục bộ (local edges) của nó để tìm điểm khởi đầu tiềm năng của chu trình.
+2. Khi đường đi (path) chạm đến một đỉnh (vertex) nằm trên Node khác, hệ thống sẽ gửi HTTP POST để chuyển tiếp một phần của đường đi (partial path) sang máy đó (Cross-shard messaging).
+3. Máy nhận được tin nhắn sẽ tiếp tục quá trình quét DFS cục bộ trên máy đó.
+4. **Minimum-ID Rule (Quy tắc ID nhỏ nhất)**: Chỉ bắt đầu chu trình từ đỉnh có số ID nhỏ nhất để tránh việc ghi nhận trùng lặp cùng một chu trình.
 
-| Criteria | Implementation | Status |
-|----------|---------------|--------|
-| Graph Partitioning | Hash-based vs Block-aware with Edge-Cut analysis | ✅ Excellent |
-| Traversal Logic | Distributed DFS with cross-shard path expansion | ✅ Excellent |
-| Multi-Model Integration| Graph edges (`financial_transactions`) + Relational (`metadata`) | ✅ Excellent |
-| Topology Analysis | Edge-Cut Ratio, Centralized vs Distributed benchmark | ✅ Excellent |
+## Tác giả
 
-## 👤 Author
-
-- **Student ID**: N23DCCN155
-- **Name**: Đặng Văn Hiệp
-- **Course**: INT1414 - Distributed Database Systems
-- **Instructor**: TS. Hà Thanh Lê
+- **Mã sinh viên**: N23DCCN155
+- **Họ và tên**: Đặng Văn Hiệp
+- **Học phần**: INT1414 - Distributed Database Systems (Hệ quản trị CSDL phân tán)

@@ -1,14 +1,23 @@
-data/*.json
-data/*.csv
-data/*.log
 __pycache__/
 *.pyc
 .env
 venv/
 .venv/
 node_modules/
-data/raw/
-data/benchmark_history.json
-data/node_*.log
 *.log
 *.zip
+
+# File PaySim gốc rất nặng (~500MB) - không commit
+data/raw/
+
+# File runtime - không commit
+data/node_*.log
+data/benchmark_history.json
+
+# File partition được tạo tự động bởi bước "Phân mảnh đồ thị"
+# Không cần commit, backend/partition.py sẽ tạo lại khi chạy pipeline
+data/partition_*.json
+
+# Sample data đã xử lý (financial_transactions.csv, account_mapping.csv)
+# được commit vào repo để thầy có thể clone và chạy demo ngay
+# KHÔNG ignore các file này

@@ -1,22 +1,21 @@
 """
-app.py - Web Dashboard API Server
+app.py - Máy chủ Web API & Quản lý (Web Dashboard API Server)
 ==================================
-Central Flask application that serves the web dashboard and provides REST API
-for controlling the entire distributed fraud detection system.
+Ứng dụng Flask trung tâm phục vụ giao diện web dashboard và cung cấp REST API
+để điều khiển toàn bộ hệ thống phát hiện gian lận phân tán.
 
-This server manages:
-1. Data generation with configurable parameters
-2. Graph partitioning and topology analysis
-3. Node lifecycle management (start/stop/health)
-4. Fraud detection query orchestration
-5. Benchmark execution with history tracking
-6. Fault tolerance simulation (kill/restart nodes)
+Máy chủ này quản lý:
+1. Chuẩn bị dữ liệu (Data generation/preparation)
+2. Phân mảnh đồ thị và phân tích cấu trúc (Graph partitioning and topology analysis)
+3. Quản lý vòng đời các máy trạm (Node lifecycle management - start/stop/health)
+4. Điều phối truy vấn phát hiện gian lận (Fraud detection query orchestration)
+5. Giả lập tính chịu lỗi (Fault tolerance simulation - kill/restart nodes)
 
-Textbook Reference:
-- Chapter 1: Demonstrates a complete Shared-Nothing distributed database system
-  with independent sites communicating via network messages.
-- Chapter 4: Cost analysis with Communication_Cost as the dominant factor.
-- Chapter 8: Parallel execution across multiple sites for performance.
+Tham chiếu Giáo trình:
+- Chương 1: Chứng minh một hệ thống cơ sở dữ liệu phân tán kiến trúc Shared-Nothing hoàn chỉnh,
+  với các máy trạm (sites) độc lập giao tiếp qua mạng.
+- Chương 4: Phân tích chi phí (Cost analysis) với Communication_Cost là yếu tố chủ đạo.
+- Chương 8: Thực thi song song (Parallel execution) trên nhiều máy trạm để tăng hiệu năng.
 """
 
 import os
@@ -30,9 +29,14 @@ import threading
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
+# Đảm bảo stdout/stderr dùng UTF-8 trên Windows (tránh UnicodeEncodeError với cp1252)
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 # Import local modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from generate_data import generate_transaction_dataset
 from partition import load_and_partition_graph
 from coordinator import detect_fraud_rings
 
@@ -46,35 +50,9 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 node_processes = {}  # { node_id: subprocess.Popen }
-benchmark_history = []  # List of benchmark run results
-BENCHMARK_FILE = os.path.join(DATA_DIR, "benchmark_history.json")
-
-def load_benchmark_history():
-    global benchmark_history
-    if os.path.exists(BENCHMARK_FILE):
-        try:
-            with open(BENCHMARK_FILE, "r", encoding="utf-8") as f:
-                benchmark_history = json.load(f)
-        except Exception:
-            benchmark_history = []
-
-def save_benchmark_history():
-    try:
-        with open(BENCHMARK_FILE, "w", encoding="utf-8") as f:
-            json.dump(benchmark_history, f, indent=2)
-    except Exception as e:
-        print(f"Error saving benchmark history: {e}")
-
-load_benchmark_history()
 
 current_config = {
-    "num_accounts": 1000,
-    "num_normal_txs": 5000,
     "num_partitions": 3,
-    "num_local_cycles": 2,
-    "num_cross_cycles": 3,
-    "fraud_amount_base": 5000.0,
-    "partition_strategy": "hash",
 }
 last_partition_result = None
 last_generation_result = None
@@ -87,7 +65,7 @@ NODES_CONFIG = {i: f"http://localhost:{BASE_PORT + i}" for i in range(NUM_NODES)
 
 
 # ──────────────────────────────────────────────
-# Frontend Serving
+# Cung cấp file giao diện (Frontend Serving)
 # ──────────────────────────────────────────────
 
 @app.route("/")
@@ -101,63 +79,147 @@ def serve_static(path):
 
 
 # ──────────────────────────────────────────────
-# API: Data Generation
+# Helper: Poll node until healthy
 # ──────────────────────────────────────────────
 
-@app.route("/api/generate", methods=["POST"])
-def api_generate_data():
-    """Generate synthetic transaction data with configurable parameters."""
-    global current_config, last_generation_result
+def wait_for_node(url, retries=15, delay=0.5):
+    """
+    Gửi liên tục yêu cầu kiểm tra tới /health để đợi node sẵn sàng hoặc hết giờ.
+    Khắc phục tình trạng sleep cứng 2 giây không đủ thời gian cho các node 
+    tải các file phân mảnh lớn (hơn 16.000 cạnh mỗi file).
+    Thời gian chờ tối đa: retries * delay = 7.5 giây.
+    """
+    for _ in range(retries):
+        try:
+            resp = requests.get(f"{url}/health", timeout=1.0)
+            if resp.status_code == 200:
+                return "healthy"
+        except requests.exceptions.RequestException:
+            pass
+        time.sleep(delay)
+    return "unreachable"
 
-    params = request.json or {}
-    current_config.update({
-        "num_accounts": params.get("num_accounts", current_config["num_accounts"]),
-        "num_normal_txs": params.get("num_normal_txs", current_config["num_normal_txs"]),
-        "num_partitions": params.get("num_partitions", current_config["num_partitions"]),
-        "num_local_cycles": params.get("num_local_cycles", current_config["num_local_cycles"]),
-        "num_cross_cycles": params.get("num_cross_cycles", current_config["num_cross_cycles"]),
-        "fraud_amount_base": params.get("fraud_amount_base", current_config["fraud_amount_base"]),
-    })
+
+def enrich_cycle_amounts(result):
+    """Gắn số tiền giao dịch vào mỗi chu trình phát hiện được để hiển thị trên giao diện."""
+    if not result or not result.get("cycles"):
+        return result
 
     csv_path = os.path.join(DATA_DIR, "financial_transactions.csv")
+    if not os.path.exists(csv_path):
+        return result
+
+    needed_edges = set()
+    for item in result["cycles"]:
+        cycle = [str(v) for v in item.get("cycle", [])]
+        for i in range(len(cycle) - 1):
+            needed_edges.add((cycle[i], cycle[i + 1]))
+
+    amounts = {}
+    import csv as csvlib
+    with open(csv_path, "r", encoding="utf-8") as f:
+        reader = csvlib.DictReader(f)
+        for row in reader:
+            edge = (row["FromAccount"], row["ToAccount"])
+            if edge in needed_edges:
+                amounts[edge] = float(row["Amount"])
+
+    for item in result["cycles"]:
+        cycle = [str(v) for v in item.get("cycle", [])]
+        edge_amounts = [
+            amounts.get((cycle[i], cycle[i + 1]))
+            for i in range(len(cycle) - 1)
+        ]
+        item["amount"] = next((amt for amt in edge_amounts if amt is not None), None)
+
+    return result
+
+
+# ──────────────────────────────────────────────
+# API: Chuẩn bị dữ liệu (Data Preparation)
+# ──────────────────────────────────────────────
+
+@app.route("/api/prepare", methods=["POST"])
+def api_prepare():
+    """Kiểm tra và chuẩn bị dữ liệu PaySim."""
+    csv_path = os.path.join(DATA_DIR, "financial_transactions.csv")
+    mapping_path = os.path.join(DATA_DIR, "account_mapping.csv")
+    
+    # Nếu đã có dữ liệu, bỏ qua bước import (tránh ghi đè trong lúc demo)
+    if os.path.exists(csv_path) and os.path.exists(mapping_path):
+        try:
+            import csv as csvlib
+            with open(csv_path, "r", encoding="utf-8") as f:
+                total = sum(1 for _ in csvlib.DictReader(f))
+            with open(mapping_path, "r", encoding="utf-8") as f:
+                mapping_total = sum(1 for _ in csvlib.DictReader(f))
+            return jsonify({
+                "success": True,
+                "data": {
+                    "message": f"Dữ liệu đã sẵn sàng ({total:,} giao dịch). Bỏ qua bước import.",
+                    "total_transactions": total,
+                    "mapping_rows": mapping_total,
+                    "partition_rule": "HomeNode(FromAccount) = FromAccount % 3",
+                    "num_nodes": NUM_NODES,
+                    "skipped": True,
+                }
+            })
+        except Exception as e:
+            pass  # Tiếp tục thực hiện chạy lại các script nếu bị lỗi
+    
+    # Nếu chưa có dữ liệu, chạy script import
     try:
-        result = generate_transaction_dataset(
-            csv_path,
-            num_accounts=current_config["num_accounts"],
-            num_normal_txs=current_config["num_normal_txs"],
-            num_partitions=current_config["num_partitions"],
-            num_local_cycles=current_config["num_local_cycles"],
-            num_cross_cycles=current_config["num_cross_cycles"],
-            fraud_amount_base=current_config["fraud_amount_base"],
-        )
-        last_generation_result = result
-        return jsonify({"success": True, "data": result})
+        script_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
+        import_script = os.path.join(script_dir, "import_paysim.py")
+        inject_script = os.path.join(script_dir, "inject_fraud_cycles.py")
+        
+        env = dict(os.environ, PYTHONIOENCODING="utf-8")
+        subprocess.run([sys.executable, import_script], check=True, env=env)
+        subprocess.run([sys.executable, inject_script], check=True, env=env)
+        
+        if not os.path.exists(csv_path):
+            raise FileNotFoundError("Không tìm thấy file dữ liệu PaySim sau khi chuẩn bị.")
+        if not os.path.exists(mapping_path):
+            raise FileNotFoundError("Không tìm thấy file ánh xạ tài khoản sau khi chuẩn bị.")
+            
+        import csv as csvlib
+        with open(csv_path, "r", encoding="utf-8") as f:
+            total = sum(1 for _ in csvlib.DictReader(f))
+        with open(mapping_path, "r", encoding="utf-8") as f:
+            mapping_total = sum(1 for _ in csvlib.DictReader(f))
+
+        return jsonify({
+            "success": True, 
+            "data": {
+                "message": "Dataset PaySim đã được import và cấy fraud rings thành công.",
+                "total_transactions": total,
+                "mapping_rows": mapping_total,
+                "partition_rule": "HomeNode(FromAccount) = FromAccount % 3",
+                "num_nodes": NUM_NODES,
+            }
+        })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
-
 # ──────────────────────────────────────────────
-# API: Graph Partitioning
+# API: Phân mảnh Đồ thị (Graph Partitioning)
 # ──────────────────────────────────────────────
 
 @app.route("/api/partition", methods=["POST"])
 def api_partition():
-    """Partition the transaction graph and compute topology metrics."""
+    """Phân mảnh đồ thị giao dịch và tính toán các chỉ số cấu trúc (topology metrics)."""
     global last_partition_result, current_config
 
     params = request.json or {}
     num_partitions = params.get("num_partitions", current_config["num_partitions"])
-    strategy = params.get("partition_strategy", current_config.get("partition_strategy", "hash"))
-    
     current_config["num_partitions"] = num_partitions
-    current_config["partition_strategy"] = strategy
 
     csv_path = os.path.join(DATA_DIR, "financial_transactions.csv")
     if not os.path.exists(csv_path):
-        return jsonify({"success": False, "error": "No data file found. Generate data first."}), 400
+        return jsonify({"success": False, "error": "Không tìm thấy file dữ liệu. Hãy đảm bảo dữ liệu PaySim đã được chuẩn bị."}), 400
 
     try:
-        result = load_and_partition_graph(csv_path, num_partitions=num_partitions, strategy=strategy)
+        result = load_and_partition_graph(csv_path, num_partitions=num_partitions)
         last_partition_result = result
         return jsonify({"success": True, "data": result})
     except Exception as e:
@@ -165,12 +227,12 @@ def api_partition():
 
 
 # ──────────────────────────────────────────────
-# API: Node Management
+# API: Quản lý Máy trạm (Node Management)
 # ──────────────────────────────────────────────
 
 @app.route("/api/nodes/start", methods=["POST"])
 def api_start_nodes():
-    """Start all distributed node servers."""
+    """Khởi động tất cả các máy chủ node phân tán."""
     global node_processes
 
     results = []
@@ -184,36 +246,29 @@ def api_start_nodes():
         log_file_path = os.path.join(DATA_DIR, f"node_{nid}.log")
         log_file = open(log_file_path, "w", encoding="utf-8")
 
+        env = dict(os.environ, PYTHONIOENCODING="utf-8")
         p = subprocess.Popen(
             [sys.executable, node_script, str(nid), DATA_DIR],
             stdout=log_file,
             stderr=log_file,
+            env=env,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
         )
         node_processes[nid] = p
         results.append({"node_id": nid, "status": "started", "pid": p.pid, "port": BASE_PORT + nid})
 
-    # Wait for nodes to boot
-    time.sleep(2.0)
-
-    # Health check
+    # Kiểm tra sức khỏe bằng cách poll nhiều lần thay vì sleep cố định
+    # Lý do: node phải tải file partition (16000+ cạnh/node), có thể mất 2-4 giây
     for r in results:
         nid = r["node_id"]
-        try:
-            resp = requests.get(f"{NODES_CONFIG[nid]}/health", timeout=2.0)
-            if resp.status_code == 200:
-                r["health"] = "healthy"
-            else:
-                r["health"] = "unhealthy"
-        except requests.exceptions.RequestException:
-            r["health"] = "unreachable"
+        r["health"] = wait_for_node(NODES_CONFIG[nid])
 
     return jsonify({"success": True, "nodes": results})
 
 
 @app.route("/api/nodes/stop", methods=["POST"])
 def api_stop_nodes():
-    """Stop all distributed node servers."""
+    """Dừng tất cả các máy chủ node phân tán."""
     results = []
     for nid in list(node_processes.keys()):
         p = node_processes[nid]
@@ -231,7 +286,7 @@ def api_stop_nodes():
 
 @app.route("/api/nodes/status", methods=["GET"])
 def api_nodes_status():
-    """Get health status of all nodes."""
+    """Lấy trạng thái sức khỏe của tất cả các node."""
     statuses = []
     for nid in range(NUM_NODES):
         status = {
@@ -247,6 +302,8 @@ def api_nodes_status():
                 status["health"] = "healthy"
                 status["num_edges"] = health_data.get("num_edges", 0)
                 status["num_vertices"] = health_data.get("num_vertices", 0)
+                cycle_candidates = health_data.get("num_cycle_candidate_edges", 0)
+                status["num_cycle_candidate_edges"] = cycle_candidates
             else:
                 status["health"] = "unhealthy"
         except requests.exceptions.RequestException:
@@ -257,22 +314,39 @@ def api_nodes_status():
     return jsonify({"nodes": statuses})
 
 
+@app.route("/api/nodes/info/<int:nid>", methods=["GET"])
+def api_node_info(nid):
+    """Lấy mẫu dữ liệu đỉnh đang được lưu tại node (proxy tới /info của node)."""
+    if nid not in node_processes or node_processes[nid].poll() is not None:
+        return jsonify({"success": False, "error": f"Node {nid} đang ngoại tuyến."}), 400
+    
+    try:
+        resp = requests.get(f"{NODES_CONFIG[nid]}/info", timeout=2.0)
+        if resp.status_code == 200:
+            return jsonify({"success": True, "data": resp.json()})
+        else:
+            return jsonify({"success": False, "error": f"Node {nid} phản hồi mã trạng thái {resp.status_code}"}), 500
+    except requests.exceptions.RequestException as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+
 @app.route("/api/nodes/kill/<int:nid>", methods=["POST"])
 def api_kill_node(nid):
     """
-    Kill a specific node to simulate fault/crash scenario.
+    Dừng một node cụ thể để giả lập sự cố mất mát/hỏng hóc node.
 
-    Textbook Reference - Chapter 5 (Transaction Management):
-    - Demonstrates fault tolerance in distributed systems.
-    - The remaining nodes should continue to function correctly,
-      only failing for paths that require the downed node.
+    Tham chiếu Giáo trình - Chương 5 (Tính tin cậy / Xử lý lỗi):
+    - Chứng minh khả năng chịu lỗi trong hệ thống phân tán.
+    - Các node còn lại vẫn hoạt động bình thường,
+      chỉ các đường đi yêu cầu đi qua node bị dừng mới bị thất bại (partial results).
     """
     if nid not in node_processes:
-        return jsonify({"success": False, "error": f"Node {nid} is not managed."}), 404
+        return jsonify({"success": False, "error": f"Node {nid} không được quản lý."}), 404
 
     p = node_processes[nid]
     if p.poll() is not None:
-        return jsonify({"success": False, "error": f"Node {nid} is already stopped."}), 400
+        return jsonify({"success": False, "error": f"Node {nid} đã được dừng trước đó."}), 400
 
     try:
         p.terminate()
@@ -284,11 +358,11 @@ def api_kill_node(nid):
 
 @app.route("/api/nodes/restart/<int:nid>", methods=["POST"])
 def api_restart_node(nid):
-    """Restart a specific node after it was killed."""
+    """Khởi động lại một node cụ thể sau khi đã bị dừng."""
     node_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "node.py")
     log_file_path = os.path.join(DATA_DIR, f"node_{nid}.log")
 
-    # Kill if still running
+    # Dừng node nếu vẫn còn đang chạy
     if nid in node_processes:
         p = node_processes[nid]
         if p.poll() is None:
@@ -337,8 +411,8 @@ def api_detect_fraud():
     """
     try:
         global last_detection_result
-        strategy = current_config.get("partition_strategy", "hash")
-        result = detect_fraud_rings(NODES_CONFIG, strategy=strategy)
+        result = detect_fraud_rings(NODES_CONFIG)
+        result = enrich_cycle_amounts(result)
         last_detection_result = result
         return jsonify({"success": True, "data": result})
     except Exception as e:
@@ -348,195 +422,18 @@ def api_detect_fraud():
 @app.route("/api/metadata", methods=["GET"])
 def api_get_metadata():
     import csv
-    meta_path = os.path.join(DATA_DIR, "account_metadata.csv")
-    if not os.path.exists(meta_path):
-        return jsonify({"success": False, "error": "Metadata file not found"}), 404
+    mapping_path = os.path.join(DATA_DIR, "account_mapping.csv")
+    if not os.path.exists(mapping_path):
+        return jsonify({"success": False, "error": "Account mapping file not found"}), 404
         
     metadata = {}
-    with open(meta_path, "r", encoding="utf-8") as f:
+    with open(mapping_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             metadata[row["AccountID"]] = row
             
     return jsonify({"success": True, "metadata": metadata})
 
-
-# ──────────────────────────────────────────────
-# API: Benchmarking
-# ──────────────────────────────────────────────
-
-@app.route("/api/benchmark", methods=["POST"])
-def api_run_benchmark():
-    """
-    Run a complete benchmark cycle:
-    1. Generate data with specified parameters
-    2. Partition the graph
-    3. Restart all nodes with new data
-    4. Execute fraud detection
-    5. Record results
-
-    This supports the instructor's requirement for running tests multiple times
-    with different configurations and comparing results via charts.
-    """
-    global benchmark_history
-
-    params = request.json or {}
-    label = params.get("label", f"Run #{len(benchmark_history) + 1}")
-
-    try:
-        dataset_mode = params.get("dataset_mode", "synthetic")
-        csv_path = os.path.join(DATA_DIR, "financial_transactions.csv")
-
-        # Step 1: Generate or Use existing
-        if dataset_mode == "synthetic":
-            gen_result = generate_transaction_dataset(
-                csv_path,
-                num_accounts=params.get("num_accounts", 1000),
-                num_normal_txs=params.get("num_normal_txs", 5000),
-                num_partitions=params.get("num_partitions", 3),
-                num_local_cycles=params.get("num_local_cycles", 2),
-                num_cross_cycles=params.get("num_cross_cycles", 3),
-                fraud_amount_base=params.get("fraud_amount_base", 5000.0),
-            )
-        else:
-            if not os.path.exists(csv_path):
-                raise FileNotFoundError("PaySim data file not found.")
-            gen_result = {"total_transactions": "PaySim Data", "generation_time_ms": 0}
-
-        strategy = params.get("partition_strategy", current_config.get("partition_strategy", "hash"))
-        current_config["partition_strategy"] = strategy
-
-        # Step 2: Partition
-        part_result = load_and_partition_graph(
-            csv_path, 
-            num_partitions=params.get("num_partitions", 3),
-            strategy=strategy
-        )
-
-        # Step 3: Restart nodes
-        # Stop existing nodes
-        for nid in list(node_processes.keys()):
-            p = node_processes[nid]
-            if p.poll() is None:
-                p.terminate()
-                p.wait(timeout=5)
-
-        node_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "node.py")
-        for nid in range(NUM_NODES):
-            log_file = open(
-                os.path.join(DATA_DIR, f"node_{nid}.log"), "w", encoding="utf-8"
-            )
-            p = subprocess.Popen(
-                [sys.executable, node_script, str(nid), DATA_DIR],
-                stdout=log_file,
-                stderr=log_file,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
-            )
-            node_processes[nid] = p
-
-        time.sleep(2.5)
-
-        # Step 4: Execute detection
-        strategy = params.get("partition_strategy", "hash")
-        detection_result = detect_fraud_rings(NODES_CONFIG, strategy=strategy)
-
-        # Step 5: Record benchmark
-        benchmark_entry = {
-            "id": len(benchmark_history) + 1,
-            "label": label,
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "config": {
-                "dataset_mode": dataset_mode,
-                "partition_strategy": strategy,
-                "num_accounts": params.get("num_accounts", 1000),
-                "num_normal_txs": params.get("num_normal_txs", 5000),
-                "num_partitions": params.get("num_partitions", 3),
-                "num_local_cycles": params.get("num_local_cycles", 2),
-                "num_cross_cycles": params.get("num_cross_cycles", 3),
-            },
-            "generation": {
-                "total_transactions": gen_result["total_transactions"],
-                "generation_time_ms": gen_result["generation_time_ms"],
-            },
-            "partition": {
-                "edge_cut_ratio": part_result["edge_cut_ratio"],
-                "vertex_replication_factor": part_result["vertex_replication_factor"],
-                "partition_time_ms": part_result["partition_time_ms"],
-            },
-            "detection": {
-                "total_cycles": detection_result["total_cycles_detected"],
-                "local_cycles": detection_result["local_cycles"],
-                "cross_shard_cycles": detection_result["cross_shard_cycles"],
-                "total_time_ms": detection_result["total_time_ms"],
-                "active_nodes": detection_result["active_nodes"],
-                "network_messages": detection_result["aggregate_stats"]["total_network_messages"],
-                "local_ops": detection_result["aggregate_stats"]["total_local_ops"],
-            },
-        }
-
-        benchmark_history.append(benchmark_entry)
-        save_benchmark_history()
-
-        return jsonify({"success": True, "data": benchmark_entry})
-    except Exception as e:
-        import traceback
-        return jsonify({"success": False, "error": str(e), "traceback": traceback.format_exc()}), 500
-
-
-@app.route("/api/benchmark/history", methods=["GET"])
-def api_benchmark_history():
-    """Return all benchmark run history for chart visualization."""
-    return jsonify({"history": benchmark_history})
-
-
-@app.route("/api/benchmark/compare", methods=["POST"])
-def api_benchmark_compare():
-    """Run both centralized and distributed detection, and return comparison."""
-    from coordinator import detect_centralized
-    
-    try:
-        # Run Distributed
-        global last_detection_result
-        strategy = current_config.get("partition_strategy", "hash")
-        dist_result = detect_fraud_rings(NODES_CONFIG, strategy=strategy)
-        last_detection_result = dist_result
-
-        # Run Centralized
-        cent_result = detect_centralized(DATA_DIR)
-
-        if "error" in cent_result:
-            return jsonify({"success": False, "error": cent_result["error"]}), 500
-
-        comparison = {
-            "distributed": {
-                "cycles_found": dist_result["total_cycles_detected"],
-                "time_ms": dist_result["total_time_ms"],
-                "network_messages": dist_result["aggregate_stats"]["total_network_messages"],
-                "local_ops": dist_result["aggregate_stats"]["total_local_ops"]
-            },
-            "centralized": {
-                "cycles_found": cent_result["total_cycles_detected"],
-                "time_ms": cent_result["total_time_ms"],
-                "network_messages": 0,  # No network
-                "local_ops": cent_result["aggregate_stats"]["local_ops"]
-            },
-            "strategy": strategy
-        }
-
-        return jsonify({"success": True, "data": comparison})
-
-    except Exception as e:
-        import traceback
-        return jsonify({"success": False, "error": str(e), "traceback": traceback.format_exc()}), 500
-
-
-@app.route("/api/benchmark/clear", methods=["POST"])
-def api_clear_history():
-    """Clear benchmark history."""
-    global benchmark_history
-    benchmark_history = []
-    save_benchmark_history()
-    return jsonify({"success": True})
 
 
 # ──────────────────────────────────────────────
@@ -546,41 +443,40 @@ def api_clear_history():
 @app.route("/api/pipeline", methods=["POST"])
 def api_full_pipeline():
     """
-    Run the complete pipeline: generate -> partition -> start nodes -> detect.
-    This is the one-click demo endpoint.
+    Chạy toàn bộ pipeline: kiểm tra dữ liệu -> phân mảnh -> khởi động node -> dò tìm.
+    Đây là endpoint dùng cho việc chạy thử nghiệm nhanh chỉ với một cú click chuột.
     """
     params = request.json or {}
-    strategy = params.get("partition_strategy", current_config.get("partition_strategy", "hash"))
-    current_config["partition_strategy"] = strategy
 
     steps = []
 
     try:
-        dataset_mode = params.get("dataset_mode", "synthetic")
         csv_path = os.path.join(DATA_DIR, "financial_transactions.csv")
+        mapping_path = os.path.join(DATA_DIR, "account_mapping.csv")
 
-        # Step 1: Generate or Use existing
-        if dataset_mode == "synthetic":
-            gen_result = generate_transaction_dataset(
-                csv_path,
-                num_accounts=params.get("num_accounts", current_config["num_accounts"]),
-                num_normal_txs=params.get("num_normal_txs", current_config["num_normal_txs"]),
-                num_partitions=params.get("num_partitions", current_config["num_partitions"]),
-                num_local_cycles=params.get("num_local_cycles", current_config["num_local_cycles"]),
-                num_cross_cycles=params.get("num_cross_cycles", current_config["num_cross_cycles"]),
-                fraud_amount_base=params.get("fraud_amount_base", current_config["fraud_amount_base"]),
+        if not os.path.exists(csv_path):
+            raise FileNotFoundError(
+                "Thiếu file data/financial_transactions.csv. Vui lòng chạy: "
+                "python scripts/import_paysim.py, tiếp theo là python scripts/inject_fraud_cycles.py"
             )
-            steps.append({"step": "generate", "success": True, "data": gen_result})
-        else:
-            if not os.path.exists(csv_path):
-                raise FileNotFoundError("PaySim data file not found.")
-            steps.append({"step": "generate", "success": True, "data": {"message": "Using existing PaySim dataset", "total_transactions": "PaySim Data", "generation_time_ms": 0}})
+        if not os.path.exists(mapping_path):
+            raise FileNotFoundError(
+                "Thiếu file data/account_mapping.csv. Vui lòng chạy: python scripts/import_paysim.py"
+            )
+        steps.append({
+            "step": "check_data",
+            "success": True,
+            "data": {
+                "message": "Đã tìm thấy bộ dữ liệu PaySim đã được chuẩn bị sẵn.",
+                "transactions_file": csv_path,
+                "mapping_file": mapping_path,
+            },
+        })
 
         # Step 2: Partition
         part_result = load_and_partition_graph(
             csv_path, 
-            num_partitions=params.get("num_partitions", current_config["num_partitions"]),
-            strategy=params.get("partition_strategy", current_config.get("partition_strategy", "hash"))
+            num_partitions=params.get("num_partitions", current_config["num_partitions"])
         )
         steps.append({"step": "partition", "success": True, "data": part_result})
 
@@ -596,33 +492,30 @@ def api_full_pipeline():
             log_file = open(
                 os.path.join(DATA_DIR, f"node_{nid}.log"), "w", encoding="utf-8"
             )
+            env = dict(os.environ, PYTHONIOENCODING="utf-8")
             p = subprocess.Popen(
                 [sys.executable, node_script, str(nid), DATA_DIR],
                 stdout=log_file,
                 stderr=log_file,
+                env=env,
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
             )
             node_processes[nid] = p
 
-        time.sleep(2.5)
-
         node_statuses = []
         for nid in range(NUM_NODES):
-            try:
-                resp = requests.get(f"{NODES_CONFIG[nid]}/health", timeout=2.0)
-                node_statuses.append({
-                    "node_id": nid,
-                    "health": "healthy" if resp.status_code == 200 else "unhealthy",
-                })
-            except requests.exceptions.RequestException:
-                node_statuses.append({"node_id": nid, "health": "unreachable"})
+            health = wait_for_node(NODES_CONFIG[nid])
+            node_statuses.append({
+                "node_id": nid,
+                "health": health,
+            })
 
         steps.append({"step": "start_nodes", "success": True, "data": {"nodes": node_statuses}})
 
         # Step 4: Detect
         global last_detection_result
-        strategy = params.get("partition_strategy", current_config.get("partition_strategy", "hash"))
-        detection_result = detect_fraud_rings(NODES_CONFIG, strategy=strategy)
+        detection_result = detect_fraud_rings(NODES_CONFIG)
+        detection_result = enrich_cycle_amounts(detection_result)
         last_detection_result = detection_result
         steps.append({"step": "detect", "success": True, "data": detection_result})
 
@@ -638,115 +531,110 @@ def api_full_pipeline():
 # ──────────────────────────────────────────────
 @app.route("/api/graph", methods=["GET"])
 def api_graph_data():
-    """Returns a subset of the graph suitable for D3.js rendering."""
+    """Trả về một phần nhỏ của đồ thị phù hợp cho việc hiển thị bằng D3.js."""
     import csv
     import random
     
     csv_path = os.path.join(DATA_DIR, "financial_transactions.csv")
-    meta_path = os.path.join(DATA_DIR, "account_metadata.csv")
+    mapping_path = os.path.join(DATA_DIR, "account_mapping.csv")
     
     if not os.path.exists(csv_path):
-        return jsonify({"success": False, "error": "No data found"}), 404
+        return jsonify({"success": False, "error": "Không tìm thấy dữ liệu"}), 404
 
-    # Lấy danh sách ID thuộc về chu trình gian lận
-    fraud_nodes = set()
-    fraud_edges_set = set()
-    cycles_list = []
-    
-    if last_detection_result and "cycles" in last_detection_result:
-        for c in last_detection_result["cycles"]:
-            cycle_nodes = c["cycle"]
-            cycles_list.append(cycle_nodes)
-            for i in range(len(cycle_nodes)):
-                u = cycle_nodes[i]
-                v = cycle_nodes[(i + 1) % len(cycle_nodes)]
-                fraud_nodes.add(str(u))
-                fraud_nodes.add(str(v))
-                fraud_edges_set.add(f"{u}-{v}")
+    if not last_detection_result or not last_detection_result.get("cycles"):
+        return jsonify({
+            "success": True,
+            "nodes": [],
+            "edges": [],
+            "cycles": [],
+            "message": "Hãy thực hiện bước dò tìm trước khi mở xem đồ thị.",
+        })
 
-    nodes_dict = {}
-    edges_list = []
-    
-    # Read metadata first
     metadata = {}
-    if os.path.exists(meta_path):
-        with open(meta_path, "r", encoding="utf-8") as f:
+    if os.path.exists(mapping_path):
+        with open(mapping_path, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
                 metadata[row["AccountID"]] = row
 
-    normal_edges_pool = []
-    
-    MAX_FRAUD_EDGES = 150
-    MAX_NORMAL_EDGES = 100
+    fraud_nodes = set()
+    fraud_edges_set = set()
+    cycles_list = []
+
+    for c in last_detection_result["cycles"]:
+        cycle_nodes = [str(v) for v in c["cycle"]]
+        cycles_list.append(cycle_nodes)
+        for i in range(len(cycle_nodes)):
+            u = cycle_nodes[i]
+            v = cycle_nodes[(i + 1) % len(cycle_nodes)]
+            fraud_nodes.add(u)
+            fraud_nodes.add(v)
+            fraud_edges_set.add((u, v))
 
     fraud_edges_list = []
+    normal_edges_pool = []
 
-    # Parse graph
     with open(csv_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            u = row["FromAccount"]
-            v = row["ToAccount"]
-            is_fraud_val = str(row["IsFraud"]).strip().lower() in ["true", "1", "yes", "t"]
-            edge_key = f"{u}-{v}"
-            
-            # If edge is part of detected cycles OR marked as fraud
-            if edge_key in fraud_edges_set or is_fraud_val:
-                fraud_edges_list.append({"source": u, "target": v, "amount": float(row["Amount"]), "is_fraud": True})
+            u = str(row["FromAccount"])
+            v = str(row["ToAccount"])
+            edge_key = (u, v)
+
+            if edge_key in fraud_edges_set:
+                fraud_edges_list.append({
+                    "source": u,
+                    "target": v,
+                    "amount": float(row["Amount"]),
+                    "is_fraud": True
+                })
             else:
-                normal_edges_pool.append({"source": u, "target": v, "amount": float(row["Amount"]), "is_fraud": False})
+                normal_edges_pool.append({
+                    "source": u,
+                    "target": v,
+                    "amount": float(row["Amount"]),
+                    "is_fraud": False
+                })
 
-    # Prioritize detected cycle edges, then random sample the rest of fraud edges
-    detected_fraud_edges = [e for e in fraud_edges_list if f"{e['source']}-{e['target']}" in fraud_edges_set]
-    other_fraud_edges = [e for e in fraud_edges_list if f"{e['source']}-{e['target']}" not in fraud_edges_set]
-    
-    # Sample if too many
-    if len(other_fraud_edges) > MAX_FRAUD_EDGES - len(detected_fraud_edges):
-        other_fraud_edges = random.sample(other_fraud_edges, max(0, MAX_FRAUD_EDGES - len(detected_fraud_edges)))
-        
-    edges_list.extend(detected_fraud_edges)
-    edges_list.extend(other_fraud_edges)
+    edges_list = []
+    # Đưa tất cả cạnh của các chu trình được phát hiện vào (bắt buộc phải hiển thị)
+    edges_list.extend(fraud_edges_list)
 
+    # Lấy mẫu các cạnh giao dịch bình thường xung quanh làm nền (cả liên node và nội bộ)
+    MAX_NORMAL_EDGES = 100
+    sampled_normal = random.sample(normal_edges_pool, min(MAX_NORMAL_EDGES, len(normal_edges_pool)))
+    edges_list.extend(sampled_normal)
+
+    # Thu thập các đỉnh từ danh sách cạnh
+    unique_node_ids = set()
     for e in edges_list:
-        fraud_nodes.add(e["source"])
-        fraud_nodes.add(e["target"])
+        unique_node_ids.add(e["source"])
+        unique_node_ids.add(e["target"])
+        # Đảm bảo các đỉnh thuộc chu trình gian lận được đánh dấu
+        if e["is_fraud"]:
+            fraud_nodes.add(e["source"])
+            fraud_nodes.add(e["target"])
 
-    # Sample normal edges to not overload browser
-    sample_normal = random.sample(normal_edges_pool, min(MAX_NORMAL_EDGES, len(normal_edges_pool)))
-    edges_list.extend(sample_normal)
-    
-    # Compile nodes
-    for e in edges_list:
-        nodes_dict[e["source"]] = True
-        nodes_dict[e["target"]] = True
-
-    strategy = current_config.get("partition_strategy", "hash")
-    final_nodes = []
-    for nid in nodes_dict.keys():
-        try:
-            val = int(nid)
-            if strategy == "smart":
-                shard = (val // 50) % NUM_NODES
-            else:
-                shard = val % NUM_NODES
-        except:
-            shard = 0
-            
-        node_info = {
-            "id": nid,
-            "shard": shard,
-            "is_fraud": nid in fraud_nodes
+    nodes = []
+    num_partitions = current_config["num_partitions"]
+    for vertex_id in sorted(unique_node_ids, key=lambda val: int(val) if val.isdigit() else 0):
+        meta = metadata.get(vertex_id, {})
+        is_f = vertex_id in fraud_nodes
+        node_data = {
+            "id": vertex_id,
+            "label": vertex_id,
+            "shard": int(vertex_id) % num_partitions if vertex_id.isdigit() else 0,
+            "is_fraud": is_f,
+            "metadata": meta,
         }
-        if nid in metadata:
-            node_info.update(metadata[nid])
-        final_nodes.append(node_info)
+        node_data.update(meta)
+        nodes.append(node_data)
 
     return jsonify({
         "success": True,
-        "nodes": final_nodes,
+        "nodes": nodes,
         "edges": edges_list,
-        "cycles": cycles_list
+        "cycles": cycles_list,
     })
 
 # ──────────────────────────────────────────────
@@ -786,7 +674,7 @@ atexit.register(cleanup)
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("  DISTRIBUTED FRAUD RING DETECTION - WEB DASHBOARD")
-    print("  Open http://localhost:5000 in your browser")
+    print("  PHÁT HIỆN CHU TRÌNH GIAN LẬN PHÂN TÁN - WEB DASHBOARD")
+    print("  Mở địa chỉ http://localhost:5000 trên trình duyệt của bạn")
     print("=" * 60)
     app.run(host="localhost", port=5000, debug=False, threaded=True)

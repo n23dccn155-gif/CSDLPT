@@ -1,26 +1,26 @@
 """
-coordinator.py - Distributed Query Coordinator
+coordinator.py - Máy chủ Điều phối Truy vấn Phân tán (Distributed Query Coordinator)
 ===============================================
-Implements the Coordinator/Master pattern for orchestrating distributed fraud detection.
+Triển khai mẫu thiết kế Coordinator/Master để điều phối việc phát hiện gian lận phân tán.
 
-Textbook Reference:
-- Chapter 1 (Introduction):
-    - The Coordinator acts as the "Client" in a Client/Server distributed architecture.
-    - It sends parallel queries to all nodes and aggregates results.
+Tham chiếu Giáo trình:
+- Chương 1 (Introduction - Giới thiệu):
+    - Coordinator đóng vai trò là "Client" (Máy khách) trong kiến trúc phân tán Client/Server.
+    - Nó gửi các truy vấn song song (parallel queries) đến tất cả các node và tổng hợp kết quả.
 
-- Chapter 4 (Query Processing):
-    - Parallel Query Execution: The coordinator dispatches sub-queries to all nodes
-      concurrently using ThreadPoolExecutor, achieving speedup through parallelism.
-    - Result Deduplication: A cycle A->B->C->D->A is identical to B->C->D->A->B.
-      We normalize cycles by using the sorted vertex tuple as a canonical key.
+- Chương 4 (Query Processing - Xử lý truy vấn):
+    - Thực thi truy vấn song song (Parallel Query Execution): Coordinator gửi các truy vấn con (sub-queries)
+      đến tất cả các node cùng lúc thông qua ThreadPoolExecutor, đạt được tốc độ nhanh nhờ chạy song song.
+    - Loại bỏ trùng lặp kết quả (Result Deduplication): Chu trình A->B->C->D->A hoàn toàn giống với B->C->D->A->B.
+      Hệ thống chuẩn hóa các chu trình bằng cách sắp xếp (sort) lại danh sách đỉnh để tạo ra một khóa chuẩn (canonical key).
 
-- Chapter 8 (Parallel Database Systems):
-    - The coordinator implements a "Reduce" phase that merges partial results from
-      all nodes, analogous to the MapReduce paradigm.
+- Chương 8 (Parallel Database Systems - Hệ thống CSDL song song):
+    - Coordinator thực hiện bước "Reduce" (Tổng hợp) để gộp các kết quả cục bộ (partial results) từ
+      tất cả các node, tương tự như mô hình MapReduce.
 
-- Category 14 Grading (Traversal Logic):
-    - Demonstrates correct distributed query coordination across multiple sites.
-    - Handles node failures gracefully (fault tolerance).
+- Tiêu chí chấm điểm Category 14 (Traversal Logic - Logic duyệt đồ thị):
+    - Thể hiện sự điều phối truy vấn phân tán chính xác trên nhiều máy chủ (sites).
+    - Xử lý lỗi hỏng node một cách nhẹ nhàng (graceful degradation/fault tolerance).
 """
 
 import requests
@@ -37,14 +37,14 @@ NODES_CONFIG = {
 
 def query_node(node_id, url):
     """
-    Send a search initiation request to a single node.
+    Gửi lệnh bắt đầu tìm kiếm (initiate_search) tới một node cụ thể.
 
-    Returns:
-        tuple: (cycles_list, stats_dict, success_bool, elapsed_ms)
+    Trả về:
+        tuple: (danh_sách_chu_trình, dict_thống_kê, bool_thành_công, thời_gian_ms)
     """
     try:
         start_time = time.time()
-        response = requests.post(f"{url}/initiate_search", json={}, timeout=30.0)
+        response = requests.post(f"{url}/initiate_search", json={}, timeout=120.0)
         elapsed = (time.time() - start_time) * 1000
 
         if response.status_code == 200:
@@ -61,21 +61,21 @@ def query_node(node_id, url):
         return [], {}, False, 0
 
 
-def detect_fraud_rings(nodes_config=None, strategy="hash"):
+def detect_fraud_rings(nodes_config=None):
     """
-    Orchestrate distributed fraud ring detection across all nodes.
+    Điều phối việc dò tìm đường dây gian lận trên tất cả các node phân tán.
 
-    Steps:
-    1. Send parallel initiate_search requests to all active nodes.
-    2. Collect raw cycle candidates from each node.
-    3. Deduplicate cycles using canonical representation.
-    4. Return structured results with performance metrics.
+    Các bước:
+    1. Gửi lệnh initiate_search song song tới tất cả các node đang hoạt động.
+    2. Thu thập các ứng viên chu trình thô (raw cycles) từ mỗi node.
+    3. Loại bỏ trùng lặp bằng cách chuyển chu trình về dạng chuẩn hóa (canonical representation).
+    4. Trả về kết quả có cấu trúc kèm theo các chỉ số hiệu năng (performance metrics).
 
-    Args:
-        nodes_config: Dict mapping node_id -> url. Defaults to NODES_CONFIG.
+    Tham số:
+        nodes_config: Dict ánh xạ node_id -> url. Mặc định là NODES_CONFIG.
 
-    Returns:
-        dict: Detection results including cycles, timing, and node statistics.
+    Trả về:
+        dict: Kết quả tìm kiếm bao gồm chu trình, thời gian chạy và thống kê của các node.
     """
     if nodes_config is None:
         nodes_config = NODES_CONFIG
@@ -89,7 +89,7 @@ def detect_fraud_rings(nodes_config=None, strategy="hash"):
         "total_failed_requests": 0,
     }
 
-    # Parallel query dispatch to all nodes
+    # Gửi truy vấn song song tới tất cả các node (Parallel query dispatch)
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = {
             executor.submit(query_node, nid, url): nid
@@ -119,7 +119,7 @@ def detect_fraud_rings(nodes_config=None, strategy="hash"):
 
     total_time = (time.time() - start_time) * 1000
 
-    # Deduplicate cycles using canonical sorted-tuple representation
+    # Loại bỏ chu trình trùng lặp bằng cách dùng tuple đã được sắp xếp làm khóa chuẩn
     unique_cycles = {}
     for cycle in all_raw_cycles:
         if len(cycle) == 5 and cycle[0] == cycle[-1]:
@@ -128,19 +128,16 @@ def detect_fraud_rings(nodes_config=None, strategy="hash"):
             if signature not in unique_cycles:
                 unique_cycles[signature] = cycle
 
-    # Classify cycles as local vs cross-shard
+    # Phân loại chu trình là cục bộ (local) hay liên mảnh (cross-shard)
     detected_cycles = []
     for sig, cycle in unique_cycles.items():
         vertices = cycle[:-1]
         
-        # Calculate home nodes based on strategy
+        # Tính toán "node nhà" dựa trên Hash Partitioning
         home_nodes = []
         for v in vertices:
             vid = int(v)
-            if strategy == "smart":
-                home_nodes.append((vid // 50) % len(nodes_config))
-            else:
-                home_nodes.append(vid % len(nodes_config))
+            home_nodes.append(vid % len(nodes_config))
                 
         is_cross_shard = len(set(home_nodes)) > 1
 
@@ -168,96 +165,3 @@ def detect_fraud_rings(nodes_config=None, strategy="hash"):
 
     return result
 
-
-def detect_centralized(data_dir="data"):
-    """
-    Simulates centralized execution by loading all data into a single node
-    and running the exact same DFS logic. Used for benchmarking to prove
-    Distributed DB concepts (Chapter 1, Chapter 4).
-    """
-    import os
-    import csv
-    
-    csv_path = os.path.join(data_dir, "financial_transactions.csv")
-    if not os.path.exists(csv_path):
-        return {"error": "Dataset not found."}
-
-    start_time = time.time()
-    adjacency_list = {}
-    
-    # Load all data into memory
-    with open(csv_path, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            u = int(row["FromAccount"])
-            v = int(row["ToAccount"])
-            amt = float(row["Amount"])
-            if u not in adjacency_list:
-                adjacency_list[u] = []
-            adjacency_list[u].append((v, amt))
-            
-    stats = {"local_ops": 0, "network_messages": 0, "failed_requests": 0}
-    all_raw_cycles = []
-    
-    def process_path(path, amount, target):
-        curr = path[-1]
-        cycles_found = []
-
-        if len(path) == 4:
-            if curr in adjacency_list:
-                for v, amt in adjacency_list[curr]:
-                    if v == target and abs(amt - amount) < 1e-2:
-                        cycles_found.append(path + [target])
-            stats["local_ops"] += 1
-            return cycles_found
-
-        if curr not in adjacency_list:
-            return []
-
-        for next_vertex, amt in adjacency_list[curr]:
-            if abs(amt - amount) >= 1e-2:
-                continue
-            if next_vertex in path:
-                continue
-            if next_vertex < target:
-                continue
-
-            new_path = path + [next_vertex]
-            stats["local_ops"] += 1
-            cycles_found.extend(process_path(new_path, amount, target))
-
-        return cycles_found
-
-    # Initiate search from all vertices
-    for u in list(adjacency_list.keys()):
-        for v, amount in adjacency_list[u]:
-            if amount < 1000.0:
-                continue
-            if u > v:
-                continue
-            path = [u, v]
-            stats["local_ops"] += 1
-            all_raw_cycles.extend(process_path(path, amount, u))
-
-    total_time = (time.time() - start_time) * 1000
-
-    # Deduplicate
-    unique_cycles = {}
-    for cycle in all_raw_cycles:
-        if len(cycle) == 5 and cycle[0] == cycle[-1]:
-            vertices = cycle[:-1]
-            signature = tuple(sorted(vertices))
-            if signature not in unique_cycles:
-                unique_cycles[signature] = cycle
-
-    return {
-        "total_cycles_detected": len(unique_cycles),
-        "total_time_ms": round(total_time, 2),
-        "aggregate_stats": stats,
-    }
-
-
-if __name__ == "__main__":
-    import json
-    result = detect_fraud_rings()
-    print(json.dumps(result, indent=2))
